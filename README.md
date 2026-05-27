@@ -14,7 +14,7 @@
 
 > University of Oxford · Stanford University · National University of Singapore · University of Washington · University of Cambridge
 
-Evidence-grounded paper review and verification agent. It compares a paper's claims against its code, math, experiments, prior work, references, and visual layout — then renders every finding into a single interactive HTML report.
+Evidence-grounded paper review and verification agent. It compares a paper's claims against its code, math, experiments, prior work, references, and visual layout — then renders every finding into a single interactive report.
 
 <p align="center">
   <img src="assets/interface.png" alt="PaperDoctor interface" width="100%">
