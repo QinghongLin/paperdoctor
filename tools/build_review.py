@@ -184,6 +184,9 @@ body.dark .donut-center .label { color:#9ca3af; }
 body.dark .tier-bar { background:#2a2a30; }
 body.dark .tier-meta .cnt { color:#9ca3af; }
 body.dark .legend { color:#d1d5db; }
+body.dark .status-toggle:hover { background:#2a2a30; }
+body.dark .status-reset { color:#9ca3af; }
+body.dark .status-reset:hover { color:#e5e7eb; }
 /* Section bars (the L1/L2/L3 summary header) */
 body.dark details.report-section > summary { background:#1a1a1d; border-color:#2a2a30; color:#e5e7eb; }
 body.dark details.report-section > summary::before { color:#9ca3af; }
@@ -780,6 +783,8 @@ body.dark .pdf-popover-parent { background:#1e1b3a; color:#c4b5fd; }
     card.classList.add('status-' + st);
     var sEl = card.querySelector('.finding-status');
     if(sEl){ sEl.className = 'finding-status ' + st; sEl.textContent = cap(st); }
+    // Re-run the legend status filter (defined later; absent during first load)
+    if(window.pdRefreshStatusFilter) window.pdRefreshStatusFilter();
   }
 
   function applyStatusOverride(card, newStatus){
@@ -1691,7 +1696,7 @@ def donut_segments():
             continue
         arc = (count / total_findings) * circumference
         gap = circumference - arc
-        segments.append(f'''<circle cx="80" cy="80" r="60" fill="none" stroke="{colors[key]}" stroke-width="22"
+        segments.append(f'''<circle class="donut-seg" data-status="{key}" cx="80" cy="80" r="60" fill="none" stroke="{colors[key]}" stroke-width="22"
   stroke-dasharray="{arc:.2f} {gap:.2f}" stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 80 80)" />''')
         offset += arc
     return "\n".join(segments)
@@ -1699,7 +1704,12 @@ def donut_segments():
 legend_items = []
 for key, color in [("pass","#10b981"),("warning","#f59e0b"),("error","#ef4444"),("blocked","#3b82f6")]:
     if status_counts[key] > 0:
-        legend_items.append(f'<div class="legend-item"><div class="legend-dot" style="background:{color}"></div> {E(key.title())} <strong>{status_counts[key]}</strong></div>')
+        # Each legend entry doubles as a show/hide filter for its status
+        # (finding cards + PDF highlights). Wired up by the status filter JS.
+        legend_items.append(
+            f'<button type="button" class="legend-item status-toggle" data-status="{key}" style="--c:{color}" aria-pressed="true"'
+            f' title="Click to hide/show {E(key.title())} findings · Alt/Option-click to show only {E(key.title())}">'
+            f'<span class="legend-dot" style="background:{color}"></span> {E(key.title())} <strong>{status_counts[key]}</strong></button>')
 
 
 # ── Build code tree HTML ──
@@ -2186,6 +2196,22 @@ html, body {{ height:100%; overflow:hidden; font-family:-apple-system,BlinkMacSy
 .legend {{ display:flex; flex-wrap:wrap; justify-content:center; gap:6px 14px; margin-top:12px; font-size:12px; max-width:200px; }}
 .legend-item {{ display:flex; align-items:center; gap:5px; }}
 .legend-dot {{ width:10px; height:10px; border-radius:50%; flex-shrink:0; }}
+/* Status filter: legend entries toggle their status on and off */
+.status-toggle {{ font:inherit; color:inherit; background:none; border:0; padding:2px 5px; margin:-2px -5px; border-radius:4px; cursor:pointer; transition:opacity .15s, background .15s; }}
+.status-toggle:hover {{ background:#f3f4f6; }}
+.status-toggle:focus-visible {{ outline:2px solid var(--c); outline-offset:1px; }}
+.status-toggle.off {{ opacity:.45; text-decoration:line-through; }}
+.status-toggle.off .legend-dot {{ background:transparent !important; box-shadow:inset 0 0 0 1.5px var(--c); }}
+.status-reset {{ font:inherit; font-size:11px; color:#6b7280; background:none; border:0; padding:0; cursor:pointer; text-decoration:underline dotted; text-underline-offset:2px; }}
+.status-reset:hover {{ color:#111; }}
+.status-reset[hidden] {{ display:none; }}
+.donut-seg {{ transition:stroke-opacity .15s; }}
+.donut-seg.off {{ stroke-opacity:.15; }}
+body.hide-status-pass .finding-card.status-pass,
+body.hide-status-warning .finding-card.status-warning,
+body.hide-status-error .finding-card.status-error,
+body.hide-status-blocked .finding-card.status-blocked {{ display:none !important; }}
+details.report-section.status-emptied {{ display:none !important; }}
 .tier-bars-col {{ width:200px; align-items:stretch; }}
 .tier-bars-body {{ display:flex; flex-direction:column; gap:10px; }}
 .tier-block {{ display:flex; flex-direction:column; gap:4px; }}
@@ -2372,8 +2398,9 @@ body.dark .card-comment-input {{ background:#0f0f12; color:#e5e7eb; border-color
               <div class="label">Findings</div>
             </div>
           </div>
-          <div class="legend">
+          <div class="legend" id="statusLegend">
             {"".join(legend_items)}
+            <button type="button" class="status-reset" id="statusReset" hidden>show all</button>
           </div>
         </div>
         <div class="chart-col tier-bars-col" id="tierVerdictChart" hidden>
@@ -2624,7 +2651,8 @@ body.dark .card-comment-input {{ background:#0f0f12; color:#e5e7eb; border-color
     pop.className = 'pdf-popover';
     pop.style.left = (anchor.x0 / anchor.pageW * 100) + '%';
     pop.style.top = (Math.min(anchor.y1 + 8, anchor.pageH - 12) / anchor.pageH * 100) + '%';
-    var sorted = cluster.slice().sort(function(a, b){{ return (HL_NUMBERS[a.id] || 9999) - (HL_NUMBERS[b.id] || 9999); }});
+    var sorted = cluster.filter(function(h){{ return idPassesFilters(h.id); }})
+      .sort(function(a, b){{ return (HL_NUMBERS[a.id] || 9999) - (HL_NUMBERS[b.id] || 9999); }});
     var renderedParents = {{}};
     sorted.forEach(function(h){{
       var parentId = CLAIM_PARENT_BY_CHILD[h.id] || '';
@@ -2678,6 +2706,7 @@ body.dark .card-comment-input {{ background:#0f0f12; color:#e5e7eb; border-color
     badge.style.left = (r.x0 / r.pageW * 100) + '%';
     badge.style.top = (r.y0 / r.pageH * 100) + '%';
     badge.textContent = isCluster ? ('#' + HL_NUMBERS[first.id] + ' +' + (cluster.length - 1)) : ('#' + HL_NUMBERS[first.id]);
+    if(isCluster) badge._cluster = cluster;  // relabelled by applyPdfOverlayFilters
 
     function activate(e){{
       e.stopPropagation();
@@ -2869,6 +2898,103 @@ body.dark .card-comment-input {{ background:#0f0f12; color:#e5e7eb; border-color
     closeHighlightMenu();
   }});
 
+  /* ── Status filter: the donut legend entries (Pass / Warning / Error /
+     Blocked) hide or show matching finding cards and PDF highlights.
+     Click toggles one status; Alt/Option-click shows only that status
+     (Alt-click it again to show all). The choice is kept per report in
+     localStorage when the browser allows it. ── */
+  var STATUS_KEYS = ['pass', 'warning', 'error', 'blocked'];
+  var STATUS_STORE_KEY = 'paperdoctor-status-filter:' + location.pathname;
+  var HIDDEN_STATUS = {{}};
+  try {{
+    var _savedHidden = JSON.parse(localStorage.getItem(STATUS_STORE_KEY) || '[]');
+    if(Array.isArray(_savedHidden)){{
+      _savedHidden.forEach(function(s){{
+        if(STATUS_KEYS.indexOf(s) >= 0) HIDDEN_STATUS[s] = true;
+      }});
+    }}
+  }} catch(e) {{}}
+
+  // A card's current status class reflects human overrides; PDF overlay
+  // classes keep the original AI status, so the card is the source of truth.
+  function cardStatus(card){{
+    var m = (card.className || '').match(/\\bstatus-(pass|warning|error|blocked)\\b/);
+    return m ? m[1] : null;
+  }}
+  function statusForHlId(id){{
+    var card = document.querySelector('.finding-card[data-highlight-id="' + id + '"]');
+    if(card) return cardStatus(card);
+    var h = HIGHLIGHTS[id];
+    return h ? h.status : null;
+  }}
+  function sectionOn(key){{
+    if(!key) return true;
+    var cb = document.querySelector('#filterBar input[data-filter="' + key + '"]');
+    return !cb || cb.checked;
+  }}
+  function idPassesFilters(id){{
+    if(!sectionOn(sectionKeyForHlId(id))) return false;
+    var st = statusForHlId(id);
+    return !(st && HIDDEN_STATUS[st]);
+  }}
+  function overlayIds(el){{
+    var one = el.getAttribute('data-hl-id');
+    if(one) return [one];
+    return (el.getAttribute('data-hl-ids') || '').split(' ').filter(Boolean);
+  }}
+  function applyStatusFilter(save){{
+    STATUS_KEYS.forEach(function(s){{
+      document.body.classList.toggle('hide-status-' + s, !!HIDDEN_STATUS[s]);
+    }});
+    document.querySelectorAll('.status-toggle').forEach(function(btn){{
+      var off = !!HIDDEN_STATUS[btn.getAttribute('data-status')];
+      btn.classList.toggle('off', off);
+      btn.setAttribute('aria-pressed', off ? 'false' : 'true');
+    }});
+    document.querySelectorAll('.donut-seg').forEach(function(seg){{
+      seg.classList.toggle('off', !!HIDDEN_STATUS[seg.getAttribute('data-status')]);
+    }});
+    var anyHidden = STATUS_KEYS.some(function(s){{ return HIDDEN_STATUS[s]; }});
+    var reset = document.getElementById('statusReset');
+    if(reset) reset.hidden = !anyHidden;
+    // Collapse report sections whose status-bearing cards are all hidden.
+    // Sections without status cards (candidate claims, plans) are untouched.
+    document.querySelectorAll('details.report-section').forEach(function(sec){{
+      var cards = Array.prototype.filter.call(sec.querySelectorAll('.finding-card'), cardStatus);
+      var emptied = anyHidden && cards.length > 0 && cards.every(function(c){{
+        return HIDDEN_STATUS[cardStatus(c)];
+      }});
+      sec.classList.toggle('status-emptied', emptied);
+    }});
+    applyPdfOverlayFilters();
+    if(save){{
+      var hiddenList = STATUS_KEYS.filter(function(s){{ return HIDDEN_STATUS[s]; }});
+      try {{ localStorage.setItem(STATUS_STORE_KEY, JSON.stringify(hiddenList)); }} catch(e) {{}}
+    }}
+  }}
+  document.querySelectorAll('.status-toggle').forEach(function(btn){{
+    btn.addEventListener('click', function(e){{
+      var s = btn.getAttribute('data-status');
+      if(e.altKey){{
+        var solo = STATUS_KEYS.every(function(k){{ return (k === s) !== !!HIDDEN_STATUS[k]; }});
+        STATUS_KEYS.forEach(function(k){{ HIDDEN_STATUS[k] = solo ? false : (k !== s); }});
+      }} else {{
+        HIDDEN_STATUS[s] = !HIDDEN_STATUS[s];
+      }}
+      applyStatusFilter(true);
+    }});
+  }});
+  (function(){{
+    var reset = document.getElementById('statusReset');
+    if(!reset) return;
+    reset.addEventListener('click', function(){{
+      STATUS_KEYS.forEach(function(k){{ HIDDEN_STATUS[k] = false; }});
+      applyStatusFilter(true);
+    }});
+  }})();
+  // Called from setStatusClass() when a reviewer changes a card's status.
+  window.pdRefreshStatusFilter = function(){{ applyStatusFilter(false); }};
+
   /* ── Section filter checkboxes ── */
   var SECTION_LABELS = {{
     claim: 'Candidate Claims',
@@ -2881,19 +3007,26 @@ body.dark .card-comment-input {{ background:#0f0f12; color:#e5e7eb; border-color
     prior: 'Prior Work',
     repro: 'Experiment Reproduction'
   }};
+  // An overlay shows if any finding it points to passes both the section
+  // checkboxes and the status filter. Human-drawn highlights have no
+  // finding id and always show.
   function overlayVisibleForCurrentFilters(el){{
-    var raw = el.getAttribute('data-section-keys') || '';
-    var keys = raw.split(',').filter(Boolean);
-    if(keys.length === 0) return true;
-    return keys.some(function(key){{
-      var cb = document.querySelector('#filterBar input[data-filter="' + key + '"]');
-      return !cb || cb.checked;
-    }});
+    var ids = overlayIds(el);
+    if(ids.length === 0) return true;
+    return ids.some(idPassesFilters);
   }}
   function applyPdfOverlayFilters(){{
     closeHighlightMenu();
     document.querySelectorAll('.pdf-hl,.pdf-hit,.pdf-badge').forEach(function(el){{
       el.style.display = overlayVisibleForCurrentFilters(el) ? '' : 'none';
+      // Cluster badges count only the findings that are currently shown.
+      if(el._cluster){{
+        var shown = el._cluster.filter(function(h){{ return idPassesFilters(h.id); }})
+          .sort(function(a, b){{ return (HL_NUMBERS[a.id] || 9999) - (HL_NUMBERS[b.id] || 9999); }});
+        if(shown.length){{
+          el.textContent = '#' + HL_NUMBERS[shown[0].id] + (shown.length > 1 ? ' +' + (shown.length - 1) : '');
+        }}
+      }}
     }});
   }}
   // Sections that start unchecked. Candidate Claims are inputs to L2 verifiers
@@ -2930,6 +3063,7 @@ body.dark .card-comment-input {{ background:#0f0f12; color:#e5e7eb; border-color
     }});
     applyPdfOverlayFilters();
   }})();
+  applyStatusFilter(false);
 
   /* ── Code Tree (auto-generated from index.json) ── */
   var treeData = {code_tree_js};
