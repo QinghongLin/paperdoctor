@@ -80,6 +80,8 @@ At the top of the right panel (below paper title), an SVG donut pie chart summar
 - **unverifiable** — `#6b7280` (gray)
 - **blocked** — `#3b82f6` (blue)
 
+The legend under the donut is also a status filter. Clicking Pass, Warning, Error or Blocked hides or shows the finding cards and PDF highlights with that status. Alt/Option-click shows only that status, and a "show all" link appears while any status is hidden. Report sections whose cards are all hidden collapse. The filter follows human status overrides, leaves hand-drawn highlights visible, and is saved per report in the browser's localStorage.
+
 ### Bidirectional Navigation
 
 - **Click PDF highlight → scroll right panel** to the corresponding finding card (auto-opens collapsed section)
